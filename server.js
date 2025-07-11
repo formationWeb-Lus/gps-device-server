@@ -1,4 +1,4 @@
-// ✅ server.js complet avec filtrage par userId + sécurisation JWT
+// ✅ server.js complet avec filtrage par userId + sécurisation JWT + login utilisateur PostgreSQL
 
 require('dotenv').config();
 const express = require('express');
@@ -41,6 +41,31 @@ pool.connect()
     console.error('❌ Connexion PostgreSQL échouée :', err.message);
     process.exit(1);
   });
+
+// Endpoint de login par numéro de téléphone
+app.post('/api/users', async (req, res) => {
+  const { phone } = req.body;
+
+  if (!phone) {
+    return res.status(400).json({ message: 'Téléphone requis' });
+  }
+
+  try {
+    const result = await pool.query('SELECT * FROM users WHERE phone = $1', [phone]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Utilisateur non trouvé' });
+    }
+
+    const user = result.rows[0];
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '2h' });
+
+    res.json({ user, token });
+  } catch (err) {
+    console.error('Erreur /api/users :', err);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
 
 let positions = [], startTime = null, currentStop = null, stops = [], totalDistance = 0, totalStopTime = 0;
 const ADDRESS_CACHE_THRESHOLD = 0.0003;
