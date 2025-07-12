@@ -12,18 +12,12 @@ const PORT_API = process.env.PORT || 3000;
 const PORT_TCP = 5055;
 app.use(express.json());
 
-// Middleware JWT
-function verifyToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  if (!token) return res.status(401).json({ message: 'Token manquant' });
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ message: 'Token invalide' });
-    req.user = user;
-    next();
-  });
-}
+jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+  if (err) return res.status(403).json({ message: 'Token invalide' });
+  console.log('✅ Token validé, utilisateur :', user);
+  req.user = user;
+  next();
+});
 
 // Connexion PostgreSQL
 const pool = new Pool({
@@ -175,14 +169,19 @@ function startServers() {
   tcpServer.listen(PORT_TCP, () => console.log(`✅ TCP tracker en écoute sur port ${PORT_TCP}`));
 
   app.get('/api/positions', verifyToken, async (req, res) => {
-    const userId = req.user.id;
-    try {
-      const result = await pool.query(`SELECT * FROM positions WHERE userId = $1 ORDER BY timestamp ASC`, [userId]);
-      res.json(result.rows);
-    } catch (err) {
-      res.status(500).json({ message: 'Erreur serveur', error: err.message });
-    }
-  });
+  const userId = req.user.id; // Assure-toi que c’est bien défini
+  if (!userId) {
+    return res.status(403).json({ message: '❌ userId manquant dans token' });
+  }
+
+  try {
+    const result = await pool.query(`SELECT * FROM positions WHERE userId = $1 ORDER BY timestamp ASC`, [userId]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 
   app.get('/api/last-positions/:vehiculeId', async (req, res) => {
     try {
