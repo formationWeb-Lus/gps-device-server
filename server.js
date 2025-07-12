@@ -184,7 +184,7 @@ function startServers() {
     }
   });
 
-  app.get('/api/last-position/:vehiculeId', async (req, res) => {
+  app.get('/api/last-positions/:vehiculeId', async (req, res) => {
     try {
       const result = await pool.query(`SELECT * FROM positions WHERE vehiculeId = $1 ORDER BY timestamp DESC LIMIT 1`, [req.params.vehiculeId]);
       if (result.rows.length === 0) return res.status(404).json({ message: 'Position non trouvée' });
@@ -194,7 +194,38 @@ function startServers() {
     }
   });
 
-  // ✅ Route historique utilisateur par date (comme demandée)
+  
+// Endpoint de login
+app.post('/api/users', async (req, res) => {
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ message: 'Téléphone requis' });
+
+  try {
+    const result = await pool.query('SELECT * FROM users WHERE phone = $1', [phone]);
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' });
+
+    const user = result.rows[0];
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '2h' });
+    res.json({ user, token });
+  } catch (err) {
+    console.error('Erreur /api/users :', err);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// ✅ Nouvelle route pour récupérer tous les historiques d’un utilisateur
+app.get('/api/historiques', verifyToken, async (req, res) => {
+  const userId = req.user.id;
+  try {
+    const result = await pool.query('SELECT * FROM historiques WHERE userId = $1 ORDER BY date DESC', [userId]);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('❌ Erreur /api/historiques :', err.message);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// ✅ Route historique utilisateur par date
 app.get('/api/historique', verifyToken, async (req, res) => {
   const userId = req.user.id;
   const { date } = req.query;
@@ -223,13 +254,12 @@ app.get('/api/historique', verifyToken, async (req, res) => {
       positions: JSON.parse(h.positions || '[]'),
     });
   } catch (err) {
-    console.error('❌ Erreur /api/history :', err);
+    console.error('❌ Erreur /api/historique :', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
-
-  // ✅ Route historique utilisateur par date (comme demandée)
+// ✅ Route historique utilisateur par date et véhicule
 app.get('/api/historique/:vehiculeId', verifyToken, async (req, res) => {
   const userId = req.user.id;
   const { date } = req.query;
@@ -258,11 +288,10 @@ app.get('/api/historique/:vehiculeId', verifyToken, async (req, res) => {
       positions: JSON.parse(h.positions || '[]'),
     });
   } catch (err) {
-    console.error('❌ Erreur /api/history :', err);
+    console.error('❌ Erreur /api/historique/:vehiculeId :', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
-
 
   app.listen(PORT_API, () => console.log(`✅ API REST prête sur http://localhost:${PORT_API}`));
 }
