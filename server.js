@@ -7,6 +7,9 @@ const jwt = require('jsonwebtoken');
 const verifyToken = require('./auth/verifyToken'); // ✅ Import du middleware
 
 const app = express();
+const cors = require('cors');
+app.use(cors());
+
 const PORT_API = process.env.PORT || 3000;
 const PORT_TCP = 5055;
 
