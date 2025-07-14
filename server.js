@@ -185,7 +185,7 @@ function startServers() {
 
   try {
     const result = await pool.query(
-      `SELECT * FROM positions WHERE userId = $1 ORDER BY timestamp ASC`,
+      `SELECT * FROM positions WHERE userId = $1`,
       [userId]
     );
     res.json(result.rows);
@@ -198,7 +198,7 @@ function startServers() {
 
   app.get('/api/last-positions/:vehiculeId', async (req, res) => {
     try {
-      const result = await pool.query(`SELECT * FROM positions WHERE vehiculeId = $1 ORDER BY timestamp DESC LIMIT 1`, [req.params.vehiculeId]);
+      const result = await pool.query(`SELECT * FROM positions WHERE vehiculeId = $1 `, [req.params.vehiculeId]);
       if (result.rows.length === 0) return res.status(404).json({ message: 'Position non trouvée' });
       res.json(result.rows[0]);
     } catch (err) {
@@ -208,7 +208,7 @@ function startServers() {
 
   app.get('/api/historiques', verifyToken, async (req, res) => {
     try {
-      const result = await pool.query('SELECT * FROM historiques WHERE userId = $1 ORDER BY date DESC', [req.user.id]);
+      const result = await pool.query('SELECT * FROM historiques WHERE userId = $1', [req.user.id]);
       res.json(result.rows);
     } catch (err) {
       res.status(500).json({ message: 'Erreur serveur', error: err.message });
@@ -220,7 +220,7 @@ function startServers() {
     if (!date) return res.status(400).json({ message: 'Date requise' });
 
     try {
-      const result = await pool.query(`SELECT * FROM historiques WHERE userId = $1 AND date = $2 ORDER BY id DESC LIMIT 1`, [req.user.id, date]);
+      const result = await pool.query(`SELECT * FROM historiques WHERE userId = $1`, [req.user.id, date]);
       if (result.rows.length === 0) return res.status(404).json({ message: 'Aucune donnée' });
 
       const h = result.rows[0];
