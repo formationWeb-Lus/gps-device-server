@@ -230,28 +230,7 @@ function startServers() {
       res.status(500).json({ message: 'Erreur serveur', error: err.message });
     }
   });
-
-
-
-  socket.on('data', async (data) => {
-  try {
-    const message = data.toString().trim();
-
-    // Optionnel : ignorer les requêtes HTTP accidentelles
-    if (message.startsWith('GET') || message.startsWith('HEAD') || message.startsWith('POST')) {
-      console.warn('❌ Requête HTTP détectée sur le port TCP. Ignorée.');
-      socket.destroy();
-      return;
-    }
-
-    const parsed = JSON.parse(message); // essaie de parser le JSON
-    // traitement du message GPS ici...
-  } catch (err) {
-    console.error('❌ Erreur TCP: données invalides reçues (probablement pas du JSON)');
-    socket.destroy(); // déconnecte le traceur
-  }
-});
-
+  
 
 
   // ✅ Lancement final
