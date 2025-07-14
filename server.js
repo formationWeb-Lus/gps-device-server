@@ -200,5 +200,43 @@ function startServers() {
     }
   });
 
+  app.get('/api/historiques', verifyToken, async (req, res) => {
+  const userId = req.userId;
+  const date = req.query.date;
+
+  if (!date) {
+    return res.status(400).json({ message: 'La date est requise' });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT * FROM historiques WHERE userId = $1 AND date = $2 LIMIT 1`,
+      [userId, date]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Aucun historique trouvé' });
+    }
+
+    const h = result.rows[0];
+
+    res.json({
+      vehicule: h.vehicule,
+      userId: h.userid,
+      date: h.date,
+      distance_km: parseFloat(h.distance_km),
+      start_time: h.start_time,
+      end_time: h.end_time,
+      total_stops: h.total_stops,
+      total_stop_time: h.total_stop_time,
+      positions: JSON.parse(h.positions || '[]'),
+    });
+  } catch (err) {
+    console.error('Erreur lors de la récupération des historiques :', err.message);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+
   app.listen(PORT_API, () => console.log(`✅ API REST en écoute sur http://localhost:${PORT_API}`));
 }
