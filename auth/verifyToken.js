@@ -1,22 +1,15 @@
 const jwt = require('jsonwebtoken');
 
-module.exports = function (req, res, next) {
+module.exports = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  console.log('🧾 Header Authorization reçu :', authHeader); // ✅ Ajout utile pour debug
+  if (!authHeader) return res.status(403).json({ message: 'Aucun token fourni' });
 
-  const token = authHeader && authHeader.split(' ')[1];
+  const token = authHeader.split(' ')[1]; // "Bearer xxx"
 
-  if (!token) {
-    return res.status(403).json({ message: 'Token manquant ❌' });
-  }
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(403).json({ message: 'Token invalide ou expiré' });
 
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    console.log('🔓 Token décodé :', decoded); // ✅ Debug
+    req.user = { id: decoded.id }; // obligatoire pour récupérer req.user.id dans les routes
     next();
-  } catch (err) {
-    console.error('❌ Token invalide :', err.message);
-    res.status(403).json({ message: 'Token invalide ❌' });
-  }
+  });
 };

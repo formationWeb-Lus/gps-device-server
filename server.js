@@ -195,20 +195,42 @@ function startServers() {
   }
 });
 
+app.get('/api/positions-day/:vehiculeId', verifyToken, async (req, res) => {
+  const { vehiculeId } = req.params;
+  const { date } = req.query;  // format attendu : 'YYYY-MM-DD'
 
-  app.get('/api/last-positions/:vehiculeId', async (req, res) => {
-    try {
-      const result = await pool.query(`SELECT * FROM positions WHERE vehiculeId = $1 `, [req.params.vehiculeId]);
-      if (result.rows.length === 0) return res.status(404).json({ message: 'Position non trouvée' });
-      res.json(result.rows[0]);
-    } catch (err) {
-      res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  if (!date) {
+    return res.status(400).json({ message: 'La date est requise en paramètre (format YYYY-MM-DD)' });
+  }
+
+  try {
+    // On récupère toutes les positions du véhicule ce jour-là (de 00:00 à 23:59)
+    const result = await pool.query(
+      `SELECT * FROM positions 
+       WHERE vehiculeId = $1 
+         AND timestamp >= $2 
+         AND timestamp < $3
+       ORDER BY timestamp ASC`,
+      [vehiculeId, `${date} 00:00:00`, `${date} 23:59:59`]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Aucune position trouvée pour ce véhicule à cette date' });
     }
-  });
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('❌ Erreur serveur:', err.message);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 
   app.get('/api/historiques', verifyToken, async (req, res) => {
     try {
-      const result = await pool.query('SELECT * FROM historiques WHERE userId = $1', [req.user.id]);
+     const result = await pool.query(`SELECT * FROM historiques WHERE userId = $1 AND date = $2`, [req.user.id, date]);
+      if (result.rows.length === 0) return res.status(404).json({ message: 'Aucun historique trouvé pour cet utilisateur' });
+      // ✅ Retourne toutes les entrées de l'historique pour l'utilisateur
       res.json(result.rows);
     } catch (err) {
       res.status(500).json({ message: 'Erreur serveur', error: err.message });
@@ -220,9 +242,9 @@ function startServers() {
     if (!date) return res.status(400).json({ message: 'Date requise' });
 
     try {
-      const result = await pool.query(`SELECT * FROM historiques WHERE userId = $1`, [req.user.id, date]);
-      if (result.rows.length === 0) return res.status(404).json({ message: 'Aucune donnée' });
-
+     const result = await pool.query(`SELECT * FROM historiques WHERE userId = $1 AND date = $2`, [req.user.id, date]);
+      if (result.rows.length === 0) return res.status(404).json({ message: 'Aucun historique trouvé pour cette date' });
+      
       const h = result.rows[0];
       res.json({
         vehicule: h.vehicule,
