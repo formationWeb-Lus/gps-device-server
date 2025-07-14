@@ -1,31 +1,22 @@
 const jwt = require('jsonwebtoken');
 
-function verifyToken(req, res, next) {
+module.exports = function (req, res, next) {
   const authHeader = req.headers['authorization'];
-  console.log('🧾 Authorization Header:', authHeader);
+  console.log('🧾 Header Authorization reçu :', authHeader); // ✅ Ajout utile pour debug
 
-  if (!authHeader) {
-    return res.status(403).json({ message: '❌ Token manquant dans le header' });
-  }
+  const token = authHeader && authHeader.split(' ')[1];
 
-  const token = authHeader.split(' ')[1];
   if (!token) {
-    return res.status(403).json({ message: '❌ Token vide ou mal formé' });
+    return res.status(403).json({ message: 'Token manquant ❌' });
   }
 
-  console.log('🔍 Token reçu:', token);
-  console.log('🔐 JWT_SECRET utilisé:', process.env.JWT_SECRET); // ✅ Debug utile
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) {
-      console.error('❌ Erreur JWT :', err.message);
-      return res.status(403).json({ message: '❌ Token invalide' });
-    }
-
-    console.log('✅ Token valide, user:', decoded);
-    req.user = decoded; // { id: ... }
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    console.log('🔓 Token décodé :', decoded); // ✅ Debug
     next();
-  });
-}
-
-module.exports = verifyToken;
+  } catch (err) {
+    console.error('❌ Token invalide :', err.message);
+    res.status(403).json({ message: 'Token invalide ❌' });
+  }
+};

@@ -8,7 +8,13 @@ const verifyToken = require('./auth/verifyToken'); // ✅ Import du middleware
 
 const app = express();
 const cors = require('cors');
-app.use(cors());
+
+// ✅ Configuration CORS avec les bons headers
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 
 const PORT_API = process.env.PORT || 3000;
 const PORT_TCP = 5055;
