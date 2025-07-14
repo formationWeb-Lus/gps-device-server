@@ -3,13 +3,16 @@ const express = require('express');
 const net = require('net');
 const { Pool } = require('pg');
 const axios = require('axios');
-const app = express();
+const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const verifyVehiculeToken = require('./auth/verifyVehiculeToken');
+
+const app = express();
 
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 const PORT_API = process.env.PORT || 3000;
@@ -33,7 +36,6 @@ pool.connect()
     process.exit(1);
   });
 
-// ✅ Login (sans token)
 app.post('/api/users', async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ message: 'Téléphone requis' });
@@ -43,13 +45,29 @@ app.post('/api/users', async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' });
 
     const user = result.rows[0];
-    res.json({ user }); // pas de token
+    res.json({ user });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
-// 🧠 Variables session
+app.post('/api/vehicule-token', async (req, res) => {
+  const { vehiculeId } = req.body;
+  if (!vehiculeId) return res.status(400).json({ message: 'vehiculeId requis' });
+
+  try {
+    const result = await pool.query('SELECT id FROM users WHERE vehiculeid = $1', [vehiculeId]);
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Véhicule non trouvé' });
+
+    const userId = result.rows[0].id;
+    const token = jwt.sign({ vehiculeId, userId }, process.env.JWT_SECRET || 'secret', { expiresIn: '4h' });
+
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 let positions = [], startTime = null, currentStop = null, stops = [], totalDistance = 0, totalStopTime = 0;
 const ADDRESS_CACHE_THRESHOLD = 0.0003;
 let lastAddressCache = null, lastCoordsCache = null;
@@ -171,69 +189,15 @@ function startServers() {
 
   tcpServer.listen(PORT_TCP, () => console.log(`✅ TCP tracker en écoute sur port ${PORT_TCP}`));
 
-  // 🔓 Toutes les routes REST sont publiques maintenant
-  app.get('/api/positions', async (req, res) => {
+  app.get('/api/positions', verifyVehiculeToken, async (req, res) => {
+    const { vehiculeId } = req.vehicule;
     try {
-      const result = await pool.query(`SELECT * FROM positions`);
+      const result = await pool.query(`SELECT * FROM positions WHERE vehiculeId = $1`, [vehiculeId]);
       res.json(result.rows);
     } catch (err) {
       res.status(500).json({ message: 'Erreur serveur', error: err.message });
     }
   });
-app.get('/api/historiques', async (req, res) => {
-  const { userId, date } = req.query;
-  if (!userId || !date) {
-    return res.status(400).json({ message: 'userId et date requis dans la requête' });
-  }
-
-  try {
-    const result = await pool.query(
-      `SELECT * FROM historiques WHERE userId = $1 AND date = $2`,
-      [userId, date]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Aucun historique trouvé' });
-    }
-
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-app.get('/api/historique', async (req, res) => {
-  const { userId, date } = req.query;
-  if (!userId || !date) {
-    return res.status(400).json({ message: 'userId et date requis' });
-  }
-
-  try {
-    const result = await pool.query(
-      `SELECT * FROM historiques WHERE userId = $1 AND date = $2 LIMIT 1`,
-      [userId, date]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Aucun historique trouvé pour cette date' });
-    }
-
-    const h = result.rows[0];
-    res.json({
-      vehicule: h.vehicule,
-      userId: h.userid,
-      date: h.date,
-      distance_km: parseFloat(h.distance_km),
-      start_time: h.start_time,
-      end_time: h.end_time,
-      total_stops: h.total_stops,
-      total_stop_time: h.total_stop_time,
-      positions: JSON.parse(h.positions || '[]'),
-    });
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
 
   app.listen(PORT_API, () => console.log(`✅ API REST en écoute sur http://localhost:${PORT_API}`));
 }
