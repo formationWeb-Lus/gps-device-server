@@ -3,17 +3,13 @@ const express = require('express');
 const net = require('net');
 const { Pool } = require('pg');
 const axios = require('axios');
-const jwt = require('jsonwebtoken');
-const verifyToken = require('./auth/verifyToken'); // ✅ Import du middleware
-
 const app = express();
 const cors = require('cors');
 
-// ✅ Configuration CORS avec les bons headers
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type'],
 }));
 
 const PORT_API = process.env.PORT || 3000;
@@ -21,7 +17,6 @@ const PORT_TCP = 5055;
 
 app.use(express.json());
 
-// ✅ Connexion PostgreSQL
 const pool = new Pool({
   connectionString: process.env.POSTGRES_URL,
   ssl: { rejectUnauthorized: false },
@@ -31,14 +26,14 @@ pool.connect()
   .then(client => {
     console.log('✅ Connexion PostgreSQL réussie');
     client.release();
-    startServers(); // 🚀 Lancement TCP + API uniquement si la DB est OK
+    startServers();
   })
   .catch(err => {
     console.error('❌ Connexion PostgreSQL échouée :', err.message);
     process.exit(1);
   });
 
-// ✅ Endpoint de login utilisateur
+// ✅ Login (sans token)
 app.post('/api/users', async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ message: 'Téléphone requis' });
@@ -48,21 +43,17 @@ app.post('/api/users', async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' });
 
     const user = result.rows[0];
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '2h' });
-    res.json({ user, token });
+    res.json({ user }); // pas de token
   } catch (err) {
-    console.error('❌ Erreur /api/users :', err.message);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
-
-// 🧠 Variables de session de trajet
+// 🧠 Variables session
 let positions = [], startTime = null, currentStop = null, stops = [], totalDistance = 0, totalStopTime = 0;
 const ADDRESS_CACHE_THRESHOLD = 0.0003;
 let lastAddressCache = null, lastCoordsCache = null;
 
-// 📍 Fonctions utilitaires (distance, adresse, analyse...)
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371, toRad = x => x * Math.PI / 180;
   const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
@@ -112,7 +103,10 @@ async function processPosition(pos) {
       const duration = (stopEnd - currentStop.start) / 1000;
 
       if (duration >= 10) {
-        await pool.query(`INSERT INTO stops (vehiculeId, userId, latitude, longitude, timestamp, quartier, avenue, duration_seconds) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [currentStop.vehiculeId, currentStop.userId, currentStop.lat, currentStop.lon, currentStop.start, currentStop.quartier, currentStop.rue, Math.round(duration)]);
+        await pool.query(
+          `INSERT INTO stops (vehiculeId, userId, latitude, longitude, timestamp, quartier, avenue, duration_seconds) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [currentStop.vehiculeId, currentStop.userId, currentStop.lat, currentStop.lon, currentStop.start, currentStop.quartier, currentStop.rue, Math.round(duration)]
+        );
         stops.push({ latitude: currentStop.lat, longitude: currentStop.lon, duree: `${Math.round(duration)} sec`, quartier: currentStop.quartier, avenue: currentStop.rue });
         totalStopTime += duration;
       }
@@ -133,7 +127,6 @@ async function saveHistoriqueIfNeeded(vehiculeId, userId) {
   positions = []; startTime = null; stops = []; currentStop = null; totalDistance = 0; totalStopTime = 0;
 }
 
-// 🚀 Fonction principale de démarrage des serveurs (TCP + HTTP)
 function startServers() {
   const tcpServer = net.createServer(socket => {
     socket.on('data', async data => {
@@ -178,73 +171,33 @@ function startServers() {
 
   tcpServer.listen(PORT_TCP, () => console.log(`✅ TCP tracker en écoute sur port ${PORT_TCP}`));
 
-  // 🌐 API REST - Routes sécurisées
-  app.get('/api/positions', verifyToken, async (req, res) => {
-  const userId = req.user.id;
-  console.log('🔐 userId extrait du token :', userId); // 👈 utile pour debug
-
-  try {
-    const result = await pool.query(
-      `SELECT * FROM positions WHERE userId = $1`,
-      [userId]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error('❌ Erreur PostgreSQL :', err.message);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-app.get('/api/positions-day/:vehiculeId', verifyToken, async (req, res) => {
-  const { vehiculeId } = req.params;
-  const { date } = req.query;  // format attendu : 'YYYY-MM-DD'
-
-  if (!date) {
-    return res.status(400).json({ message: 'La date est requise en paramètre (format YYYY-MM-DD)' });
-  }
-
-  try {
-    // On récupère toutes les positions du véhicule ce jour-là (de 00:00 à 23:59)
-    const result = await pool.query(
-      `SELECT * FROM positions 
-       WHERE vehiculeId = $1 
-         AND timestamp >= $2 
-         AND timestamp < $3
-       ORDER BY timestamp ASC`,
-      [vehiculeId, `${date} 00:00:00`, `${date} 23:59:59`]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Aucune position trouvée pour ce véhicule à cette date' });
-    }
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error('❌ Erreur serveur:', err.message);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-
-  app.get('/api/historiques', verifyToken, async (req, res) => {
+  // 🔓 Toutes les routes REST sont publiques maintenant
+  app.get('/api/positions', async (req, res) => {
     try {
-     const result = await pool.query(`SELECT * FROM historiques WHERE userId = $1 AND date = $2`, [req.user.id, date]);
-      if (result.rows.length === 0) return res.status(404).json({ message: 'Aucun historique trouvé pour cet utilisateur' });
-      // ✅ Retourne toutes les entrées de l'historique pour l'utilisateur
+      const result = await pool.query(`SELECT * FROM positions`);
       res.json(result.rows);
     } catch (err) {
       res.status(500).json({ message: 'Erreur serveur', error: err.message });
     }
   });
 
-  app.get('/api/historique', verifyToken, async (req, res) => {
+  app.get('/api/historiques', async (req, res) => {
+    try {
+      const result = await pool.query(`SELECT * FROM historiques`);
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    }
+  });
+
+  app.get('/api/historique', async (req, res) => {
     const { date } = req.query;
     if (!date) return res.status(400).json({ message: 'Date requise' });
 
     try {
-     const result = await pool.query(`SELECT * FROM historiques WHERE userId = $1 AND date = $2`, [req.user.id, date]);
-      if (result.rows.length === 0) return res.status(404).json({ message: 'Aucun historique trouvé pour cette date' });
-      
+      const result = await pool.query(`SELECT * FROM historiques WHERE date = $1`, [date]);
+      if (result.rows.length === 0) return res.status(404).json({ message: 'Aucun historique trouvé' });
+
       const h = result.rows[0];
       res.json({
         vehicule: h.vehicule,
@@ -261,9 +214,6 @@ app.get('/api/positions-day/:vehiculeId', verifyToken, async (req, res) => {
       res.status(500).json({ message: 'Erreur serveur', error: err.message });
     }
   });
-  
 
-
-  // ✅ Lancement final
   app.listen(PORT_API, () => console.log(`✅ API REST en écoute sur http://localhost:${PORT_API}`));
 }
