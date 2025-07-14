@@ -199,8 +199,7 @@ function startServers() {
       res.status(500).json({ message: 'Erreur serveur', error: err.message });
     }
   });
-
-  app.get('/api/historiques', verifyVehiculeToken, async (req, res) => {
+app.get('/api/historiques', verifyVehiculeToken, async (req, res) => {
   const userId = req.userId;
   const date = req.query.date;
 
@@ -210,7 +209,7 @@ function startServers() {
 
   try {
     const result = await pool.query(
-      `SELECT * FROM historiques WHERE userId = $1 AND date = $2 LIMIT 1`,
+      `SELECT * FROM historiques WHERE userId = $1 AND date = $2 ORDER BY id DESC LIMIT 1`,
       [userId, date]
     );
 
@@ -219,7 +218,15 @@ function startServers() {
     }
 
     const h = result.rows[0];
+    let positions = [];
 
+    try {
+      positions = JSON.parse(h.positions || '[]');
+    } catch (err) {
+      console.warn('⚠️ Erreur parsing positions JSON :', err.message);
+    }
+
+    // ✅ Toujours envoyer une réponse même si positions est vide
     res.json({
       vehicule: h.vehicule,
       userId: h.userid,
@@ -229,14 +236,13 @@ function startServers() {
       end_time: h.end_time,
       total_stops: h.total_stops,
       total_stop_time: h.total_stop_time,
-      positions: JSON.parse(h.positions || '[]'),
+      positions,
     });
   } catch (err) {
-    console.error('Erreur lors de la récupération des historiques :', err.message);
+    console.error('❌ Erreur lors de la récupération des historiques :', err.message);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
-
 
   app.listen(PORT_API, () => console.log(`✅ API REST en écoute sur http://localhost:${PORT_API}`));
 }
