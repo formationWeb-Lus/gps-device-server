@@ -171,13 +171,21 @@ function startServers() {
 
   // 🌐 API REST - Routes sécurisées
   app.get('/api/positions', verifyToken, async (req, res) => {
-    try {
-      const result = await pool.query(`SELECT * FROM positions WHERE userId = $1 ORDER BY timestamp ASC`, [req.user.id]);
-      res.json(result.rows);
-    } catch (err) {
-      res.status(500).json({ message: 'Erreur serveur', error: err.message });
-    }
-  });
+  const userId = req.user.id;
+  console.log('🔐 userId extrait du token :', userId); // 👈 utile pour debug
+
+  try {
+    const result = await pool.query(
+      `SELECT * FROM positions WHERE userId = $1 ORDER BY timestamp ASC`,
+      [userId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('❌ Erreur PostgreSQL :', err.message);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 
   app.get('/api/last-positions/:vehiculeId', async (req, res) => {
     try {
