@@ -4,7 +4,7 @@ const net = require('net');
 const { Pool } = require('pg');
 const axios = require('axios');
 const cors = require('cors');
-const verifyToken = require('./auth/vehiculeToken');
+const verifyToken = require('./auth/verifyVehiculeToken');
 
 const app = express();
 const PORT_API = process.env.PORT || 3000;
