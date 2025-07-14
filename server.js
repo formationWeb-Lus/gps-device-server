@@ -69,42 +69,6 @@ app.post('/api/vehicule-token', async (req, res) => {
 });
 
 
-app.get('/api/historiques', verifyToken, async (req, res) => {
-  const userId = req.user.id;
-  const { date } = req.query;
-
-  if (!userId || !date) {
-    return res.status(400).json({ message: 'userId et date requis' });
-  }
-
-  try {
-    const result = await pool.query(
-      `SELECT * FROM historiques WHERE userId = $1 AND date = $2 LIMIT 1`,
-      [userId, date]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Aucun historique trouvé pour cette date' });
-    }
-
-    const h = result.rows[0];
-    res.json({
-      vehicule: h.vehicule,
-      userId: h.userid,
-      date: h.date,
-      distance_km: parseFloat(h.distance_km),
-      start_time: h.start_time,
-      end_time: h.end_time,
-      total_stops: h.total_stops,
-      total_stop_time: h.total_stop_time,
-      positions: JSON.parse(h.positions || '[]'),
-    });
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-
 let positions = [], startTime = null, currentStop = null, stops = [], totalDistance = 0, totalStopTime = 0;
 const ADDRESS_CACHE_THRESHOLD = 0.0003;
 let lastAddressCache = null, lastCoordsCache = null;
