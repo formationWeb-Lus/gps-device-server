@@ -200,7 +200,7 @@ function startServers() {
     }
   });
 
-  app.get('/api/historiques', verifyToken, async (req, res) => {
+  app.get('/api/historiques', verifyVehiculeToken, async (req, res) => {
   const userId = req.userId;
   const date = req.query.date;
 
