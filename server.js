@@ -3,18 +3,20 @@ const express = require('express');
 const net = require('net');
 const { Pool } = require('pg');
 const axios = require('axios');
+const jwt = require('jsonwebtoken');
 const cors = require('cors');
-const verifyToken = require('./auth/verifyVehiculeToken');
+const verifyVehiculeToken = require('./auth/verifyVehiculeToken');
 
 const app = express();
-const PORT_API = process.env.PORT || 3000;
-const PORT_TCP = 5055;
 
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+
+const PORT_API = process.env.PORT || 3000;
+const PORT_TCP = 5055;
 
 app.use(express.json());
 
@@ -49,6 +51,24 @@ app.post('/api/users', async (req, res) => {
   }
 });
 
+app.post('/api/vehicule-token', async (req, res) => {
+  const { vehiculeId } = req.body;
+  if (!vehiculeId) return res.status(400).json({ message: 'vehiculeId requis' });
+
+  try {
+    const result = await pool.query('SELECT id FROM users WHERE vehiculeid = $1', [vehiculeId]);
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Véhicule non trouvé' });
+
+    const userId = result.rows[0].id;
+    const token = jwt.sign({ vehiculeId, userId }, process.env.JWT_SECRET || 'secret', { expiresIn: '4h' });
+
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+
 let positions = [], startTime = null, currentStop = null, stops = [], totalDistance = 0, totalStopTime = 0;
 const ADDRESS_CACHE_THRESHOLD = 0.0003;
 let lastAddressCache = null, lastCoordsCache = null;
@@ -56,7 +76,7 @@ let lastAddressCache = null, lastCoordsCache = null;
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371, toRad = x => x * Math.PI / 180;
   const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
@@ -170,48 +190,12 @@ function startServers() {
 
   tcpServer.listen(PORT_TCP, () => console.log(`✅ TCP tracker en écoute sur port ${PORT_TCP}`));
 
-  app.get('/api/positions', async (req, res) => {
+  app.get('/api/positions', verifyVehiculeToken, async (req, res) => {
+    const { vehiculeId } = req.vehicule;
     try {
-      const result = await pool.query(`SELECT * FROM positions`);
+      const result = await pool.query(`SELECT * FROM positions WHERE vehiculeId = $1`, [vehiculeId]);
       res.json(result.rows);
     } catch (err) {
-      res.status(500).json({ message: 'Erreur serveur', error: err.message });
-    }
-  });
-
-  app.get('/api/historiques', verifyToken, async (req, res) => {
-    const userId = req.userId;
-    const date = req.query.date;
-
-    if (!date) {
-      return res.status(400).json({ message: 'La date est requise' });
-    }
-
-    try {
-      const result = await pool.query(
-        `SELECT * FROM historiques WHERE userId = $1 AND date = $2 LIMIT 1`,
-        [userId, date]
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ message: 'Aucun historique trouvé' });
-      }
-
-      const h = result.rows[0];
-
-      res.json({
-        vehicule: h.vehicule,
-        userId: h.userid,
-        date: h.date,
-        distance_km: parseFloat(h.distance_km),
-        start_time: h.start_time,
-        end_time: h.end_time,
-        total_stops: h.total_stops,
-        total_stop_time: h.total_stop_time,
-        positions: JSON.parse(h.positions || '[]'),
-      });
-    } catch (err) {
-      console.error('Erreur lors de la récupération des historiques :', err.message);
       res.status(500).json({ message: 'Erreur serveur', error: err.message });
     }
   });
