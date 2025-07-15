@@ -219,11 +219,35 @@ function startServers() {
     return res.status(401).json({ message: "Utilisateur non authentifié" });
   }
 
+  // Récupérer la date et l'heure (format attendu : "YYYY-MM-DD HH:mm")
+  const datetime = req.query.datetime; // exemple : "2025-07-15 10:30"
+
   try {
-    const result = await pool.query(
-      `SELECT * FROM historiques WHERE userId = $1 ORDER BY date DESC`,
-      [userId]
-    );
+    let query = '';
+    let params = [];
+
+    if (datetime) {
+      // Séparer date et time
+      // ou tu peux faire un filtre exact sur timestamp/datetime selon ta table
+      // Ici on suppose que ta table a une colonne 'date' (type DATE) et 'start_time' (type TIME)
+      const [date, time] = datetime.split(' ');
+
+      query = `
+        SELECT * FROM historiques
+        WHERE userId = $1 AND date = $2 AND start_time = $3
+        ORDER BY date DESC
+      `;
+      params = [userId, date, time];
+    } else {
+      query = `
+        SELECT * FROM historiques
+        WHERE userId = $1
+        ORDER BY date DESC
+      `;
+      params = [userId];
+    }
+
+    const result = await pool.query(query, params);
 
     const data = result.rows.map(h => ({
       vehiculeid: h.vehiculeid,
@@ -241,8 +265,12 @@ function startServers() {
           console.error('❌ JSON invalide pour positions :', h.positions);
           return [];
         }
-      })()
+      })(),
     }));
+
+    if (data.length === 0) {
+      return res.status(404).json({ message: 'Aucun historique trouvé' });
+    }
 
     res.json(data);
   } catch (err) {
