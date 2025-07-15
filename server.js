@@ -211,28 +211,19 @@ function startServers() {
       res.status(500).json({ message: 'Erreur serveur', error: err.message });
     }
   });
-
 app.get('/api/historiques', verifyVehiculeToken, async (req, res) => {
-  const userId = req.vehicule.userid; // ✅ correction ici
-  const date = req.query.date;
-
-  if (!date) {
-    return res.status(400).json({ message: 'La date est requise' });
+  const userId = req.vehicule?.userId || req.userId; // selon ton middleware
+  if (!userId) {
+    return res.status(401).json({ message: "Utilisateur non authentifié" });
   }
 
   try {
     const result = await pool.query(
-      `SELECT * FROM historiques WHERE userid = $1 AND date = $2 LIMIT 1`,
-      [userId, date]
+      `SELECT * FROM historiques WHERE userId = $1 ORDER BY date DESC`,
+      [userId]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Aucun historique trouvé' });
-    }
-
-    const h = result.rows[0];
-
-    res.json({
+    const data = result.rows.map(h => ({
       vehiculeid: h.vehiculeid,
       userId: h.userid,
       date: h.date,
@@ -241,14 +232,15 @@ app.get('/api/historiques', verifyVehiculeToken, async (req, res) => {
       end_time: h.end_time,
       total_stops: h.total_stops,
       total_stop_time: h.total_stop_time,
-      positions: JSON.parse(h.positions || '[]')
-    });
+      positions: JSON.parse(h.positions || '[]'),
+    }));
+
+    res.json(data);
   } catch (err) {
     console.error('❌ Erreur lors de la récupération des historiques :', err.message);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
-
 
   app.listen(PORT_API, () =>
     console.log(`✅ API REST en écoute sur http://localhost:${PORT_API}`)
