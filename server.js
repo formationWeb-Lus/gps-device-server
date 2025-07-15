@@ -211,8 +211,10 @@ function startServers() {
       res.status(500).json({ message: 'Erreur serveur', error: err.message });
     }
   });
-app.get('/api/historiques', verifyVehiculeToken, async (req, res) => {
-  const userId = req.vehicule?.userId || req.userId; // selon ton middleware
+
+  app.get('/api/historiques', verifyVehiculeToken, async (req, res) => {
+  const userId = req.vehicule?.userId || req.userId;
+
   if (!userId) {
     return res.status(401).json({ message: "Utilisateur non authentifié" });
   }
@@ -232,7 +234,14 @@ app.get('/api/historiques', verifyVehiculeToken, async (req, res) => {
       end_time: h.end_time,
       total_stops: h.total_stops,
       total_stop_time: h.total_stop_time,
-      positions: JSON.parse(h.positions || '[]'),
+      positions: (() => {
+        try {
+          return JSON.parse(h.positions || '[]');
+        } catch (e) {
+          console.error('❌ JSON invalide pour positions :', h.positions);
+          return [];
+        }
+      })()
     }));
 
     res.json(data);
@@ -241,6 +250,7 @@ app.get('/api/historiques', verifyVehiculeToken, async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
+
 
   app.listen(PORT_API, () =>
     console.log(`✅ API REST en écoute sur http://localhost:${PORT_API}`)
