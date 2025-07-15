@@ -1,4 +1,7 @@
+// 🌍 Chargement des variables d'environnement
 require('dotenv').config();
+
+// 📦 Dépendances principales
 const express = require('express');
 const net = require('net');
 const { Pool } = require('pg');
@@ -8,18 +11,20 @@ const cors = require('cors');
 const verifyVehiculeToken = require('./auth/verifyVehiculeToken');
 
 const app = express();
+const PORT_API = process.env.PORT || 3000;
+const PORT_TCP = 5055;
 
+// 🌐 Middleware CORS
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-const PORT_API = process.env.PORT || 3000;
-const PORT_TCP = 5055;
-
+// 🔄 Middleware JSON
 app.use(express.json());
 
+// 🛢️ Connexion PostgreSQL
 const pool = new Pool({
   connectionString: process.env.POSTGRES_URL,
   ssl: { rejectUnauthorized: false },
@@ -36,6 +41,7 @@ pool.connect()
     process.exit(1);
   });
 
+// 📱 Authentification utilisateur (récupération simple)
 app.post('/api/users', async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ message: 'Téléphone requis' });
@@ -43,7 +49,6 @@ app.post('/api/users', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM users WHERE phone = $1', [phone]);
     if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' });
-
     const user = result.rows[0];
     res.json({ user });
   } catch (err) {
@@ -51,6 +56,7 @@ app.post('/api/users', async (req, res) => {
   }
 });
 
+// 🎫 Générer un token JWT pour un véhicule
 app.post('/api/vehicule-token', async (req, res) => {
   const { vehiculeId } = req.body;
   if (!vehiculeId) return res.status(400).json({ message: 'vehiculeId requis' });
@@ -61,18 +67,13 @@ app.post('/api/vehicule-token', async (req, res) => {
 
     const userId = result.rows[0].id;
     const token = jwt.sign({ vehiculeId, userId }, process.env.JWT_SECRET || 'secret', { expiresIn: '4h' });
-
     res.json({ token });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
-
-let positions = [], startTime = null, currentStop = null, stops = [], totalDistance = 0, totalStopTime = 0;
-const ADDRESS_CACHE_THRESHOLD = 0.0003;
-let lastAddressCache = null, lastCoordsCache = null;
-
+// 🧠 Calcul de distance Haversine
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371, toRad = x => x * Math.PI / 180;
   const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
@@ -80,9 +81,12 @@ const haversineDistance = (lat1, lon1, lat2, lon2) => {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-const coordsChangedSignificantly = (lat1, lon1, lat2, lon2, threshold = ADDRESS_CACHE_THRESHOLD) => {
+const ADDRESS_CACHE_THRESHOLD = 0.0003;
+let lastAddressCache = null, lastCoordsCache = null;
+
+function coordsChangedSignificantly(lat1, lon1, lat2, lon2, threshold = ADDRESS_CACHE_THRESHOLD) {
   return Math.abs(lat1 - lat2) > threshold || Math.abs(lon1 - lon2) > threshold;
-};
+}
 
 async function getAddress(lat, lon) {
   try {
@@ -106,6 +110,8 @@ async function getAddress(lat, lon) {
   }
 }
 
+let positions = [], startTime = null, currentStop = null, stops = [], totalDistance = 0, totalStopTime = 0;
+
 async function processPosition(pos) {
   if (!startTime) startTime = new Date(pos.timestamp);
   const last = positions.length ? positions[positions.length - 1] : null;
@@ -120,16 +126,11 @@ async function processPosition(pos) {
     } else if (currentStop && pos.vitesse > 2) {
       const stopEnd = new Date(pos.timestamp);
       const duration = (stopEnd - currentStop.start) / 1000;
-
       if (duration >= 10) {
-        await pool.query(
-          `INSERT INTO stops (vehiculeId, userId, latitude, longitude, timestamp, quartier, avenue, duration_seconds) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [currentStop.vehiculeId, currentStop.userId, currentStop.lat, currentStop.lon, currentStop.start, currentStop.quartier, currentStop.rue, Math.round(duration)]
-        );
+        await pool.query(`INSERT INTO stops (vehiculeId, userId, latitude, longitude, timestamp, quartier, avenue, duration_seconds) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [currentStop.vehiculeId, currentStop.userId, currentStop.lat, currentStop.lon, currentStop.start, currentStop.quartier, currentStop.rue, Math.round(duration)]);
         stops.push({ latitude: currentStop.lat, longitude: currentStop.lon, duree: `${Math.round(duration)} sec`, quartier: currentStop.quartier, avenue: currentStop.rue });
         totalStopTime += duration;
       }
-
       currentStop = null;
     }
   }
@@ -141,12 +142,14 @@ async function saveHistoriqueIfNeeded(vehiculeId, userId) {
   const startStr = startTime.toISOString().slice(11, 16);
   const endStr = new Date().toISOString().slice(11, 16);
 
-  await pool.query(`INSERT INTO historiques (vehicule, userId, date, distance_km, start_time, end_time, total_stops, total_stop_time, positions) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [vehiculeId, userId, dateStr, totalDistance.toFixed(2), startStr, endStr, stops.length, `${Math.round(totalStopTime / 60)} min`, JSON.stringify(stops)]);
+  await pool.query(`INSERT INTO historiques (vehiculeid, userId, date, distance_km, start_time, end_time, total_stops, total_stop_time, positions) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [vehiculeId, userId, dateStr, totalDistance.toFixed(2), startStr, endStr, stops.length, `${Math.round(totalStopTime / 60)} min`, JSON.stringify(stops)]);
 
   positions = []; startTime = null; stops = []; currentStop = null; totalDistance = 0; totalStopTime = 0;
 }
 
 function startServers() {
+  const clients = new Map();
+
   const tcpServer = net.createServer(socket => {
     socket.on('data', async data => {
       try {
@@ -155,17 +158,16 @@ function startServers() {
         const parsed = JSON.parse(jsonPart);
 
         const { latitude, longitude, speed = 0 } = parsed.location.coords;
-        const vehiculeId = parsed.device_id || 'Toyota';
+        const vehiculeId = parsed.device_id || 'Inconnu';
 
         const result = await pool.query('SELECT id FROM users WHERE vehiculeid = $1', [vehiculeId]);
         if (result.rows.length === 0) return console.warn(`⚠️ Aucun utilisateur trouvé pour ${vehiculeId}`);
         const userId = result.rows[0].id;
 
+        clients.set(socket, { vehiculeId, userId });
+
         const now = Date.now();
-        const shouldUpdateAddress =
-          !lastCoordsCache ||
-          coordsChangedSignificantly(latitude, longitude, lastCoordsCache.lat, lastCoordsCache.lon) ||
-          speed > 10 || (now - (lastCoordsCache?.timestamp || 0)) > 30000;
+        const shouldUpdateAddress = !lastCoordsCache || coordsChangedSignificantly(latitude, longitude, lastCoordsCache.lat, lastCoordsCache.lon) || speed > 10 || (now - (lastCoordsCache?.timestamp || 0)) > 30000;
 
         if (shouldUpdateAddress) {
           lastAddressCache = await getAddress(latitude, longitude);
@@ -183,12 +185,22 @@ function startServers() {
     });
 
     socket.on('end', async () => {
-      await saveHistoriqueIfNeeded('Toyota', 1);
-      console.log('📁 Traceur déconnecté. Historique sauvegardé.');
+      const info = clients.get(socket);
+      if (info) {
+        await saveHistoriqueIfNeeded(info.vehiculeId, info.userId);
+        console.log(`📁 Traceur ${info.vehiculeId} déconnecté. Historique sauvegardé.`);
+        clients.delete(socket);
+      }
+    });
+
+    socket.on('error', err => {
+      console.error('💥 Erreur socket :', err.message);
     });
   });
 
-  tcpServer.listen(PORT_TCP, () => console.log(`✅ TCP tracker en écoute sur port ${PORT_TCP}`));
+  tcpServer.listen(PORT_TCP, () =>
+    console.log(`✅ TCP tracker en écoute sur port ${PORT_TCP}`)
+  );
 
   app.get('/api/positions', verifyVehiculeToken, async (req, res) => {
     const { vehiculeId } = req.vehicule;
@@ -201,42 +213,39 @@ function startServers() {
   });
 
   app.get('/api/historiques', verifyVehiculeToken, async (req, res) => {
-  const userId = req.userId;
-  const date = req.query.date;
+    const userId = req.userId;
+    const date = req.query.date;
 
-  if (!date) {
-    return res.status(400).json({ message: 'La date est requise' });
-  }
-
-  try {
-    const result = await pool.query(
-      `SELECT * FROM historiques WHERE userId = $1 AND date = $2 LIMIT 1`,
-      [userId, date]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Aucun historique trouvé' });
+    if (!date) {
+      return res.status(400).json({ message: 'La date est requise' });
     }
 
-    const h = result.rows[0];
+    try {
+      const result = await pool.query(`SELECT * FROM historiques WHERE userid = $1 AND date = $2 LIMIT 1`, [userId, date]);
 
-    res.json({
-      vehicule: h.vehicule,
-      userId: h.userid,
-      date: h.date,
-      distance_km: parseFloat(h.distance_km),
-      start_time: h.start_time,
-      end_time: h.end_time,
-      total_stops: h.total_stops,
-      total_stop_time: h.total_stop_time,
-      positions: JSON.parse(h.positions || '[]'),
-    });
-  } catch (err) {
-    console.error('Erreur lors de la récupération des historiques :', err.message);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
+      if (result.rows.length === 0) {
+        return res.status(404).json({ message: 'Aucun historique trouvé' });
+      }
 
+      const h = result.rows[0];
+      res.json({
+        vehiculeid: h.vehiculeid,
+        userId: h.userid,
+        date: h.date,
+        distance_km: parseFloat(h.distance_km),
+        start_time: h.start_time,
+        end_time: h.end_time,
+        total_stops: h.total_stops,
+        total_stop_time: h.total_stop_time,
+        positions: JSON.parse(h.positions || '[]')
+      });
+    } catch (err) {
+      console.error('Erreur lors de la récupération des historiques :', err.message);
+      res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    }
+  });
 
-  app.listen(PORT_API, () => console.log(`✅ API REST en écoute sur http://localhost:${PORT_API}`));
+  app.listen(PORT_API, () =>
+    console.log(`✅ API REST en écoute sur http://localhost:${PORT_API}`)
+  );
 }
