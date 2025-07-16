@@ -41,7 +41,7 @@ pool.connect()
     process.exit(1);
   });
 
-// 📱 Authentification utilisateur (récupération simple)
+// 📱 Authentification utilisateur (simple)
 app.post('/api/users', async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ message: 'Téléphone requis' });
@@ -73,11 +73,56 @@ app.post('/api/vehicule-token', async (req, res) => {
   }
 });
 
-// 🧠 Calcul de distance Haversine
+// 🟡 Enregistrement d’un arrêt (stop) via traceur
+app.post('/api/stops/from-tracker', async (req, res) => {
+  const {
+    vehiculeId,
+    latitude,
+    longitude,
+    timestamp,
+    quartier,
+    avenue,
+    duration_seconds
+  } = req.body;
+
+  if (
+    !vehiculeId ||
+    typeof latitude !== 'number' ||
+    typeof longitude !== 'number' ||
+    !timestamp ||
+    typeof quartier !== 'string' ||
+    typeof avenue !== 'string' ||
+    typeof duration_seconds !== 'number'
+  ) {
+    return res.status(400).json({ error: 'Champs requis manquants ou invalides.' });
+  }
+
+  try {
+    await pool.query(`
+      INSERT INTO stops (vehiculeid, latitude, longitude, timestamp, quartier, rue, duration_seconds)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, [
+      vehiculeId,
+      latitude,
+      longitude,
+      timestamp,
+      quartier,
+      avenue,
+      duration_seconds
+    ]);
+
+    res.status(201).json({ message: '🟡 Arrêt enregistré avec succès' });
+  } catch (error) {
+    console.error('❌ Erreur lors de l’enregistrement de l’arrêt :', error.message);
+    res.status(500).json({ error: 'Erreur serveur lors de l’enregistrement de l’arrêt' });
+  }
+});
+
+// ⚙️ Fonctions utilitaires
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371, toRad = x => x * Math.PI / 180;
   const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
@@ -127,8 +172,24 @@ async function processPosition(pos) {
       const stopEnd = new Date(pos.timestamp);
       const duration = (stopEnd - currentStop.start) / 1000;
       if (duration >= 10) {
-        await pool.query(`INSERT INTO stops (vehiculeId, userId, latitude, longitude, timestamp, quartier, avenue, duration_seconds) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [currentStop.vehiculeId, currentStop.userId, currentStop.lat, currentStop.lon, currentStop.start, currentStop.quartier, currentStop.rue, Math.round(duration)]);
-        stops.push({ latitude: currentStop.lat, longitude: currentStop.lon, duree: `${Math.round(duration)} sec`, quartier: currentStop.quartier, avenue: currentStop.rue });
+        await pool.query(`
+          INSERT INTO stops (vehiculeId, userId, latitude, longitude, timestamp, quartier, avenue, duration_seconds)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        `, [
+          currentStop.vehiculeId, currentStop.userId,
+          currentStop.lat, currentStop.lon,
+          currentStop.start, currentStop.quartier, currentStop.rue,
+          Math.round(duration)
+        ]);
+
+        stops.push({
+          latitude: currentStop.lat,
+          longitude: currentStop.lon,
+          duree: `${Math.round(duration)} sec`,
+          quartier: currentStop.quartier,
+          avenue: currentStop.rue
+        });
+
         totalStopTime += duration;
       }
       currentStop = null;
@@ -142,7 +203,15 @@ async function saveHistoriqueIfNeeded(vehiculeId, userId) {
   const startStr = startTime.toISOString().slice(11, 16);
   const endStr = new Date().toISOString().slice(11, 16);
 
-  await pool.query(`INSERT INTO historiques (vehiculeid, userId, date, distance_km, start_time, end_time, total_stops, total_stop_time, positions) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [vehiculeId, userId, dateStr, totalDistance.toFixed(2), startStr, endStr, stops.length, `${Math.round(totalStopTime / 60)} min`, JSON.stringify(stops)]);
+  await pool.query(`
+    INSERT INTO historiques (vehiculeid, userId, date, distance_km, start_time, end_time, total_stops, total_stop_time, positions)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+  `, [
+    vehiculeId, userId, dateStr,
+    totalDistance.toFixed(2), startStr, endStr,
+    stops.length, `${Math.round(totalStopTime / 60)} min`,
+    JSON.stringify(stops)
+  ]);
 
   positions = []; startTime = null; stops = []; currentStop = null; totalDistance = 0; totalStopTime = 0;
 }
@@ -167,7 +236,10 @@ function startServers() {
         clients.set(socket, { vehiculeId, userId });
 
         const now = Date.now();
-        const shouldUpdateAddress = !lastCoordsCache || coordsChangedSignificantly(latitude, longitude, lastCoordsCache.lat, lastCoordsCache.lon) || speed > 10 || (now - (lastCoordsCache?.timestamp || 0)) > 30000;
+        const shouldUpdateAddress =
+          !lastCoordsCache ||
+          coordsChangedSignificantly(latitude, longitude, lastCoordsCache.lat, lastCoordsCache.lon) ||
+          speed > 10 || (now - (lastCoordsCache?.timestamp || 0)) > 30000;
 
         if (shouldUpdateAddress) {
           lastAddressCache = await getAddress(latitude, longitude);
@@ -175,9 +247,25 @@ function startServers() {
           await new Promise(res => setTimeout(res, 1000));
         }
 
-        const pos = { userId, vehiculeId, latitude, longitude, vitesse: speed, timestamp: parsed.location.timestamp, ...lastAddressCache };
+        const pos = {
+          userId, vehiculeId,
+          latitude, longitude,
+          vitesse: speed,
+          timestamp: parsed.location.timestamp,
+          ...lastAddressCache
+        };
+
         await processPosition(pos);
-        await pool.query(`INSERT INTO positions (vehiculeId, userId, latitude, longitude, vitesse, timestamp, quartier, rue, ville, comte, region, code_postal, pays) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, [pos.vehiculeId, pos.userId, pos.latitude, pos.longitude, pos.vitesse, pos.timestamp, pos.quartier, pos.rue, pos.ville, pos.comte, pos.region, pos.code_postal, pos.pays]);
+
+        await pool.query(`
+          INSERT INTO positions (vehiculeId, userId, latitude, longitude, vitesse, timestamp, quartier, rue, ville, comte, region, code_postal, pays)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        `, [
+          pos.vehiculeId, pos.userId, pos.latitude, pos.longitude, pos.vitesse,
+          pos.timestamp, pos.quartier, pos.rue, pos.ville, pos.comte, pos.region,
+          pos.code_postal, pos.pays
+        ]);
+
         console.log(`✅ [${vehiculeId}] Position enregistrée à ${pos.quartier} / ${pos.rue}`);
       } catch (err) {
         console.error('❌ Erreur TCP:', err.message);
@@ -213,72 +301,58 @@ function startServers() {
   });
 
   app.get('/api/historiques', verifyVehiculeToken, async (req, res) => {
-  const userId = req.vehicule?.userId || req.userId;
+    const userId = req.vehicule?.userId || req.userId;
+    if (!userId) return res.status(401).json({ message: "Utilisateur non authentifié" });
 
-  if (!userId) {
-    return res.status(401).json({ message: "Utilisateur non authentifié" });
-  }
+    const datetime = req.query.datetime;
 
-  // Récupérer la date et l'heure (format attendu : "YYYY-MM-DD HH:mm")
-  const datetime = req.query.datetime; // exemple : "2025-07-15 10:30"
+    try {
+      let query = '', params = [];
 
-  try {
-    let query = '';
-    let params = [];
+      if (datetime) {
+        const [date, time] = datetime.split(' ');
+        query = `
+          SELECT * FROM historiques
+          WHERE userId = $1 AND date = $2 AND start_time = $3
+          ORDER BY date DESC
+        `;
+        params = [userId, date, time];
+      } else {
+        query = `
+          SELECT * FROM historiques
+          WHERE userId = $1
+          ORDER BY date DESC
+        `;
+        params = [userId];
+      }
 
-    if (datetime) {
-      // Séparer date et time
-      // ou tu peux faire un filtre exact sur timestamp/datetime selon ta table
-      // Ici on suppose que ta table a une colonne 'date' (type DATE) et 'start_time' (type TIME)
-      const [date, time] = datetime.split(' ');
+      const result = await pool.query(query, params);
+      const data = result.rows.map(h => ({
+        vehiculeid: h.vehiculeid,
+        userId: h.userid,
+        date: h.date,
+        distance_km: parseFloat(h.distance_km),
+        start_time: h.start_time,
+        end_time: h.end_time,
+        total_stops: h.total_stops,
+        total_stop_time: h.total_stop_time,
+        positions: (() => {
+          try {
+            return JSON.parse(h.positions || '[]');
+          } catch {
+            return [];
+          }
+        })(),
+      }));
 
-      query = `
-        SELECT * FROM historiques
-        WHERE userId = $1 AND date = $2 AND start_time = $3
-        ORDER BY date DESC
-      `;
-      params = [userId, date, time];
-    } else {
-      query = `
-        SELECT * FROM historiques
-        WHERE userId = $1
-        ORDER BY date DESC
-      `;
-      params = [userId];
+      if (data.length === 0) return res.status(404).json({ message: 'Aucun historique trouvé' });
+
+      res.json(data);
+    } catch (err) {
+      console.error('❌ Erreur lors de la récupération des historiques :', err.message);
+      res.status(500).json({ message: 'Erreur serveur', error: err.message });
     }
-
-    const result = await pool.query(query, params);
-
-    const data = result.rows.map(h => ({
-      vehiculeid: h.vehiculeid,
-      userId: h.userid,
-      date: h.date,
-      distance_km: parseFloat(h.distance_km),
-      start_time: h.start_time,
-      end_time: h.end_time,
-      total_stops: h.total_stops,
-      total_stop_time: h.total_stop_time,
-      positions: (() => {
-        try {
-          return JSON.parse(h.positions || '[]');
-        } catch (e) {
-          console.error('❌ JSON invalide pour positions :', h.positions);
-          return [];
-        }
-      })(),
-    }));
-
-    if (data.length === 0) {
-      return res.status(404).json({ message: 'Aucun historique trouvé' });
-    }
-
-    res.json(data);
-  } catch (err) {
-    console.error('❌ Erreur lors de la récupération des historiques :', err.message);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
+  });
 
   app.listen(PORT_API, () =>
     console.log(`✅ API REST en écoute sur http://localhost:${PORT_API}`)
