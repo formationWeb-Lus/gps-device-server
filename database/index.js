@@ -1,12 +1,14 @@
-console.log("📦 DATABASE_URL = ", process.env.DATABASE_URL);
 const { Pool } = require('pg');
+
 const pool = new Pool({
-  
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  },
+  host: process.env.PGHOST,
+  user: process.env.PGUSER,
+  password: process.env.PGPASSWORD,
+  database: process.env.PGDATABASE,
+  port: process.env.PGPORT,
+  ssl: { rejectUnauthorized: false } // important pour Render
 });
+
 // Vérifie la connexion
 pool.connect()
   .then(() => console.log('✅ Connexion PostgreSQL réussie'))
