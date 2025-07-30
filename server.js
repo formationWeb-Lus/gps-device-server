@@ -24,11 +24,14 @@ app.use(cors({
 // 🔄 Middleware JSON
 app.use(express.json());
 
-// 🛢️ Connexion PostgreSQL
 const pool = new Pool({
-  connectionString: process.env.POSTGRES_URL,
-  ssl: { rejectUnauthorized: false },
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    require: true,
+    rejectUnauthorized: false
+  }
 });
+
 
 pool.connect()
   .then(client => {
@@ -191,6 +194,7 @@ function startServers() {
         console.log(`📁 Traceur ${info.vehiculeId} déconnecté. Historique sauvegardé.`);
         clients.delete(socket);
       }
+      
     });
 
     socket.on('error', err => {
@@ -201,6 +205,14 @@ function startServers() {
   tcpServer.listen(PORT_TCP, () =>
     console.log(`✅ TCP tracker en écoute sur port ${PORT_TCP}`)
   );
+  
+// ✅ Déplacement ici :
+setInterval(async () => {
+  for (const [socket, info] of clients) {
+    await saveHistoriqueIfNeeded(info.vehiculeId, info.userId);
+    console.log(`⏱️ Historique périodique sauvegardé pour ${info.vehiculeId}`);
+  }
+}, 5 * 60 * 1000);
 
   app.get('/api/positions', verifyVehiculeToken, async (req, res) => {
     const { vehiculeId } = req.vehicule;
