@@ -44,7 +44,6 @@ pool.connect()
     process.exit(1);
   });
 
-// 📱 Authentification utilisateur (récupération simple)
 app.post('/api/users', async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ message: 'Téléphone requis' });
@@ -52,23 +51,28 @@ app.post('/api/users', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM users WHERE phone = $1', [phone]);
     if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' });
+
     const user = result.rows[0];
-    res.json({ user });
+
+    const vehicules = await pool.query('SELECT vehiculeid FROM vehicules WHERE user_id = $1', [user.id]);
+
+    res.json({
+      user,
+      vehicules: vehicules.rows.map(v => v.vehiculeid)
+    });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
-
-// 🎫 Générer un token JWT pour un véhicule
 app.post('/api/vehicule-token', async (req, res) => {
   const { vehiculeId } = req.body;
   if (!vehiculeId) return res.status(400).json({ message: 'vehiculeId requis' });
 
   try {
-    const result = await pool.query('SELECT id FROM users WHERE vehiculeid = $1', [vehiculeId]);
+    const result = await pool.query('SELECT user_id FROM vehicules WHERE vehiculeid = $1', [vehiculeId]);
     if (result.rows.length === 0) return res.status(404).json({ message: 'Véhicule non trouvé' });
 
-    const userId = result.rows[0].id;
+    const userId = result.rows[0].user_id;
     const token = jwt.sign({ vehiculeId, userId }, process.env.JWT_SECRET || 'secret', { expiresIn: '4h' });
     res.json({ token });
   } catch (err) {
@@ -202,7 +206,13 @@ function startServers() {
         const { latitude, longitude, speed = 0 } = parsed.location.coords;
         const vehiculeId = parsed.device_id || 'Inconnu';
 
-        const result = await pool.query('SELECT id FROM users WHERE vehiculeid = $1', [vehiculeId]);
+        const result = await pool.query(`
+  SELECT users.id 
+  FROM users 
+  JOIN vehicules ON users.id = vehicules.user_id 
+  WHERE vehicules.vehiculeid = $1
+`, [vehiculeId]);
+
         if (result.rows.length === 0) return console.warn(`⚠️ Aucun utilisateur trouvé pour ${vehiculeId}`);
         const userId = result.rows[0].id;
 
