@@ -102,38 +102,51 @@ async function getAddress(lat, lon) {
     });
 
     const result = res.data.results[0];
-    const components = result.components;
+    const components = result.components || {};
 
-    let ville = components.city || components.town || components.village || '';
-    let quartier = components.suburb || components.neighbourhood || components.city_district || '';
+    const quartier =
+      components.suburb ||
+      components.neighbourhood ||
+      components.city_district ||
+      components.village ||
+      components.town ||
+      components.county ||
+      '';
 
-    // Correction pour certains cas connus
-    if (ville.toLowerCase() === 'diur') {
-      quartier = ville;
-      ville = 'Kolwezi';
-    }
+    const ville =
+      components.city ||
+      components.town ||
+      components.village ||
+      components.county ||
+      '';
+
+    const code_postal = components.postcode || 'Non disponible';
+
+    const adresse_formatee = result.formatted || "Adresse inconnue";
 
     return {
       numero: components.house_number || '',
       rue: components.road || '',
+      quartier: quartier || 'Inconnu',
       ville,
-      quartier,
       comte: components.county || '',
       region: components.state || '',
-      code_postal: components.postcode || '',
-      pays: components.country || ''
+      code_postal,
+      pays: components.country || '',
+      adresse_formatee
     };
   } catch (err) {
     console.error('❌ Erreur OpenCage:', err.message);
     return {
       numero: '',
       rue: '',
+      quartier: 'Erreur',
       ville: '',
-      quartier: '',
       comte: '',
       region: '',
-      code_postal: '',
-      pays: ''
+      code_postal: 'Erreur',
+      pays: '',
+      adresse_formatee: 'Adresse inconnue'
     };
   }
 }
