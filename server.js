@@ -90,28 +90,54 @@ let lastAddressCache = null, lastCoordsCache = null;
 function coordsChangedSignificantly(lat1, lon1, lat2, lon2, threshold = ADDRESS_CACHE_THRESHOLD) {
   return Math.abs(lat1 - lat2) > threshold || Math.abs(lon1 - lon2) > threshold;
 }
-
 async function getAddress(lat, lon) {
   try {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&addressdetails=1`;
-    const res = await axios.get(url, { headers: { 'User-Agent': 'gps-tracker' } });
-    const address = res.data.address || {};
-    let ville = address.city || address.town || address.village || '';
-    let quartier = address.suburb || address.city_district || address.neighbourhood || address.hamlet || '';
-    if (ville.toLowerCase() === 'diur') { quartier = ville; ville = 'Kolwezi'; }
+    const res = await axios.get('https://api.opencagedata.com/geocode/v1/json', {
+      params: {
+        key: process.env.OPENCAGE_API_KEY,
+        q: `${lat},${lon}`,
+        language: 'fr',
+        no_annotations: 1
+      }
+    });
+
+    const result = res.data.results[0];
+    const components = result.components;
+
+    let ville = components.city || components.town || components.village || '';
+    let quartier = components.suburb || components.neighbourhood || components.city_district || '';
+
+    // Correction pour certains cas connus
+    if (ville.toLowerCase() === 'diur') {
+      quartier = ville;
+      ville = 'Kolwezi';
+    }
+
     return {
-      numero: address.house_number || '',
-      rue: address.road || '',
-      ville, quartier,
-      comte: address.county || '',
-      region: address.state || '',
-      code_postal: address.postcode || '',
-      pays: address.country || ''
+      numero: components.house_number || '',
+      rue: components.road || '',
+      ville,
+      quartier,
+      comte: components.county || '',
+      region: components.state || '',
+      code_postal: components.postcode || '',
+      pays: components.country || ''
     };
-  } catch {
-    return { numero: '', rue: '', quartier: '', ville: '', comte: '', region: '', code_postal: '', pays: '' };
+  } catch (err) {
+    console.error('❌ Erreur OpenCage:', err.message);
+    return {
+      numero: '',
+      rue: '',
+      ville: '',
+      quartier: '',
+      comte: '',
+      region: '',
+      code_postal: '',
+      pays: ''
+    };
   }
 }
+
 
 let positions = [], startTime = null, currentStop = null, stops = [], totalDistance = 0, totalStopTime = 0;
 
