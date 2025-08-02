@@ -44,6 +44,23 @@ pool.connect()
     process.exit(1);
   });
 
+  app.get('/api/positions/user', verifyUserToken, async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    const result = await pool.query(`
+      SELECT * FROM positions
+      WHERE userid = $1
+      ORDER BY timestamp DESC
+    `, [userId]);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('❌ Erreur récupération des positions utilisateur :', err.message);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 app.post('/api/users', async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ message: 'Téléphone requis' });
@@ -64,7 +81,7 @@ app.post('/api/users', async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
-app.post('/api/vehicules-token', async (req, res) => {
+app.post('/api/vehicule-token', async (req, res) => {
   const { vehiculeId } = req.body;
   if (!vehiculeId) return res.status(400).json({ message: 'vehiculeId requis' });
 
@@ -209,7 +226,7 @@ function startServers() {
         const result = await pool.query(`
   SELECT users.id 
   FROM users 
-  JOIN vehicules ON users.id = vehicules.userid 
+  JOIN vehicules ON users.id = vehicules.user_id 
   WHERE vehicules.vehiculeid = $1
 `, [vehiculeId]);
 
