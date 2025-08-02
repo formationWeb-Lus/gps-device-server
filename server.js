@@ -8,8 +8,7 @@ const { Pool } = require('pg');
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
-const { verifyVehiculeToken, verifyUserToken } = require('./auth/verifyVehiculeToken');
-
+const verifyVehiculeToken = require('./auth/verifyVehiculeToken');
 
 const app = express();
 const PORT_API = process.env.PORT || 3000;
