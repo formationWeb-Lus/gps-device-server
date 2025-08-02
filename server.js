@@ -209,7 +209,7 @@ function startServers() {
         const result = await pool.query(`
   SELECT users.id 
   FROM users 
-  JOIN vehicules ON users.id = vehicules.user_id 
+  JOIN vehicules ON users.id = vehicules.userid 
   WHERE vehicules.vehiculeid = $1
 `, [vehiculeId]);
 
