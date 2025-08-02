@@ -82,7 +82,7 @@ app.post('/api/users', async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
-app.post('/api/vehicule-token', async (req, res) => {
+app.post('/api/vehicules-token', async (req, res) => {
   const { vehiculeId } = req.body;
   if (!vehiculeId) return res.status(400).json({ message: 'vehiculeId requis' });
 
