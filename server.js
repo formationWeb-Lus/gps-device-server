@@ -47,82 +47,53 @@ pool.connect()
 
   app.get('/api/positions/user', verifyUserToken, async (req, res) => {
   const userId = req.user.id;
-
   try {
-    const result = await pool.query(`
-      SELECT * FROM positions
-      WHERE userid = $1
-      ORDER BY timestamp DESC
-    `, [userId]);
-
+    const result = await pool.query('SELECT * FROM positions WHERE userid = $1 ORDER BY timestamp DESC', [userId]);
     res.json(result.rows);
   } catch (err) {
-    console.error('❌ Erreur récupération des positions utilisateur :', err.message);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
-// 📍 Ajouter cette route pour recevoir le numéro de téléphone et répondre avec l'utilisateur et son véhicule
+// 📍 Route non sécurisée - Donne les infos à partir du numéro de téléphone
 app.post('/api/positions/user', async (req, res) => {
   const { phone } = req.body;
-
   if (!phone) return res.status(400).json({ message: 'Numéro de téléphone requis' });
-
   try {
-    const result = await pool.query('SELECT * FROM users WHERE phone = $1', [phone]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Utilisateur non trouvé' });
-    }
-
-    const user = result.rows[0];
-
-    const vehicules = await pool.query(
-      'SELECT vehiculeid FROM vehicules WHERE user_id = $1 LIMIT 1',
-      [user.id]
-    );
-
-    if (vehicules.rows.length === 0) {
-      return res.status(404).json({ message: 'Aucun véhicule associé' });
-    }
-
+    const userResult = await pool.query('SELECT * FROM users WHERE phone = $1', [phone]);
+    if (userResult.rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' });
+    const user = userResult.rows[0];
+    const vehicules = await pool.query('SELECT vehiculeid FROM vehicules WHERE user_id = $1 LIMIT 1', [user.id]);
+    if (vehicules.rows.length === 0) return res.status(404).json({ message: 'Aucun véhicule associé' });
     user.vehiculeid = vehicules.rows[0].vehiculeid;
-
     res.json({ user });
   } catch (err) {
-    console.error('❌ Erreur /api/positions/user:', err.message);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
+// 📍 Route pour vérifier l'utilisateur par téléphone
 app.post('/api/users', async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ message: 'Téléphone requis' });
-
   try {
-    const result = await pool.query('SELECT * FROM users WHERE phone = $1', [phone]);
-    if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' });
-
-    const user = result.rows[0];
-
+    const userResult = await pool.query('SELECT * FROM users WHERE phone = $1', [phone]);
+    if (userResult.rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' });
+    const user = userResult.rows[0];
     const vehicules = await pool.query('SELECT vehiculeid FROM vehicules WHERE user_id = $1', [user.id]);
-
-    res.json({
-      user,
-      vehicules: vehicules.rows.map(v => v.vehiculeid)
-    });
+    res.json({ user, vehicules: vehicules.rows.map(v => v.vehiculeid) });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
+
+// 📍 Génération de token pour un véhicule
 app.post('/api/vehicules-token', async (req, res) => {
   const { vehiculeId } = req.body;
   if (!vehiculeId) return res.status(400).json({ message: 'vehiculeId requis' });
-
   try {
     const result = await pool.query('SELECT user_id FROM vehicules WHERE vehiculeid = $1', [vehiculeId]);
     if (result.rows.length === 0) return res.status(404).json({ message: 'Véhicule non trouvé' });
-
     const userId = result.rows[0].user_id;
     const token = jwt.sign({ vehiculeId, userId }, process.env.JWT_SECRET || 'secret', { expiresIn: '4h' });
     res.json({ token });
@@ -130,6 +101,7 @@ app.post('/api/vehicules-token', async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
+
 
 // 🧠 Calcul de distance Haversine
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
