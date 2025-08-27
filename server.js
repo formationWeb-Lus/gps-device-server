@@ -1,15 +1,14 @@
 // 🌍 Chargement des variables d'environnement
 require('dotenv').config();
 
-// 📦 Dépendances principales
 const express = require('express');
 const net = require('net');
-const { Pool } = require('pg');
+const cors = require('cors');
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
-const cors = require('cors');
-const { verifyVehiculeToken, verifyUserToken } = require('./auth/verifyVehiculeToken');
-
+const pool = require('./models/db'); // connexion PostgreSQL
+const routes = require('./routes'); // routes API existantes
+const { verifyVehiculeToken } = require('./auth/verifyVehiculeToken');
 
 const app = express();
 const PORT_API = process.env.PORT || 3000;
@@ -25,85 +24,17 @@ app.use(cors({
 // 🔄 Middleware JSON
 app.use(express.json());
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    require: true,
-    rejectUnauthorized: false
-  }
+// 📍 Route test racine
+app.get('/', (req, res) => {
+  res.send('Bienvenue sur le serveur GPS RDC ✅');
 });
 
+// 📍 Routes API
+app.use('/api', routes);
 
-pool.connect()
-  .then(client => {
-    console.log('✅ Connexion PostgreSQL réussie');
-    client.release();
-    startServers();
-  })
-  .catch(err => {
-    console.error('❌ Connexion PostgreSQL échouée :', err.message);
-    process.exit(1);
-  });
-
-  app.get('/api/positions/user', verifyUserToken, async (req, res) => {
-  const userId = req.user.id;
-  try {
-    const result = await pool.query('SELECT * FROM positions WHERE userid = $1 ORDER BY timestamp DESC', [userId]);
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-// 📍 Route non sécurisée - Donne les infos à partir du numéro de téléphone
-app.post('/api/positions/user', async (req, res) => {
-  const { phone } = req.body;
-  if (!phone) return res.status(400).json({ message: 'Numéro de téléphone requis' });
-  try {
-    const userResult = await pool.query('SELECT * FROM users WHERE phone = $1', [phone]);
-    if (userResult.rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' });
-    const user = userResult.rows[0];
-    const vehicules = await pool.query('SELECT vehiculeid FROM vehicules WHERE user_id = $1 LIMIT 1', [user.id]);
-    if (vehicules.rows.length === 0) return res.status(404).json({ message: 'Aucun véhicule associé' });
-    user.vehiculeid = vehicules.rows[0].vehiculeid;
-    res.json({ user });
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-// 📍 Route pour vérifier l'utilisateur par téléphone
-app.post('/api/users', async (req, res) => {
-  const { phone } = req.body;
-  if (!phone) return res.status(400).json({ message: 'Téléphone requis' });
-  try {
-    const userResult = await pool.query('SELECT * FROM users WHERE phone = $1', [phone]);
-    if (userResult.rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' });
-    const user = userResult.rows[0];
-    const vehicules = await pool.query('SELECT vehiculeid FROM vehicules WHERE user_id = $1', [user.id]);
-    res.json({ user, vehicules: vehicules.rows.map(v => v.vehiculeid) });
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-// 📍 Génération de token pour un véhicule
-app.post('/api/vehicules-token', async (req, res) => {
-  const { vehiculeId } = req.body;
-  if (!vehiculeId) return res.status(400).json({ message: 'vehiculeId requis' });
-  try {
-    const result = await pool.query('SELECT user_id FROM vehicules WHERE vehiculeid = $1', [vehiculeId]);
-    if (result.rows.length === 0) return res.status(404).json({ message: 'Véhicule non trouvé' });
-    const userId = result.rows[0].user_id;
-    const token = jwt.sign({ vehiculeId, userId }, process.env.JWT_SECRET || 'secret', { expiresIn: '4h' });
-    res.json({ token });
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-
-// 🧠 Calcul de distance Haversine
+// ======================
+// 🧠 Fonctions utilitaires
+// ======================
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371, toRad = x => x * Math.PI / 180;
   const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
@@ -117,68 +48,89 @@ let lastAddressCache = null, lastCoordsCache = null;
 function coordsChangedSignificantly(lat1, lon1, lat2, lon2, threshold = ADDRESS_CACHE_THRESHOLD) {
   return Math.abs(lat1 - lat2) > threshold || Math.abs(lon1 - lon2) > threshold;
 }
+
+function getComponent(components, type) {
+  const comp = components.find(c => c.types.includes(type));
+  return comp ? comp.long_name : '';
+}
+
 async function getAddress(lat, lon) {
+  let adresse = {
+    numero: '',
+    rue: '',
+    quartier: '',
+    ville: '',
+    comte: '',
+    region: '',
+    code_postal: '',
+    pays: '',
+    adresse_formatee: 'Adresse inconnue'
+  };
+
   try {
-    const res = await axios.get('https://api.opencagedata.com/geocode/v1/json', {
-      params: {
-        key: process.env.OPENCAGE_API_KEY,
-        q: `${lat},${lon}`,
-        language: 'fr',
-        no_annotations: 1
-      }
+    // 1️⃣ Tentative Google Maps
+    const gRes = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
+      params: { latlng: `${lat},${lon}`, key: process.env.GOOGLE_MAPS_API_KEY, language: 'fr' }
     });
 
-    const result = res.data.results[0];
-    const components = result.components || {};
+    const gResults = gRes.data.results || [];
 
-    const quartier =
-      components.suburb ||
-      components.neighbourhood ||
-      components.city_district ||
-      components.village ||
-      components.town ||
-      components.county ||
-      '';
+    function getComponent(components, type) {
+      const comp = components.find(c => c.types.includes(type));
+      return comp ? comp.long_name : '';
+    }
 
-    const ville =
-      components.city ||
-      components.town ||
-      components.village ||
-      components.county ||
-      '';
+    for (const result of gResults) {
+      const components = result.address_components || [];
 
-    const code_postal = components.postcode || 'Non disponible';
+      if (!adresse.numero) adresse.numero = getComponent(components, 'street_number');
+      if (!adresse.rue) adresse.rue = getComponent(components, 'route');
+      if (!adresse.quartier) adresse.quartier = getComponent(components, 'sublocality_level_1') || getComponent(components, 'neighborhood');
+      if (!adresse.ville) adresse.ville = getComponent(components, 'locality') || getComponent(components, 'administrative_area_level_3');
+      if (!adresse.comte) adresse.comte = getComponent(components, 'administrative_area_level_2');
+      if (!adresse.region) adresse.region = getComponent(components, 'administrative_area_level_1');
+      if (!adresse.code_postal) adresse.code_postal = getComponent(components, 'postal_code');
+      if (!adresse.pays) adresse.pays = getComponent(components, 'country');
 
-    const adresse_formatee = result.formatted || "Adresse inconnue";
+      if (adresse.numero && adresse.rue && adresse.quartier && adresse.ville && adresse.comte && adresse.region && adresse.code_postal && adresse.pays) break;
+    }
 
-    return {
-      numero: components.house_number || '',
-      rue: components.road || '',
-      quartier: quartier || 'Inconnu',
-      ville,
-      comte: components.county || '',
-      region: components.state || '',
-      code_postal,
-      pays: components.country || '',
-      adresse_formatee
-    };
+    if (gResults[0]?.formatted_address) adresse.adresse_formatee = gResults[0].formatted_address;
+
+    // 2️⃣ Complément OpenStreetMap (Nominatim) si certains champs manquent
+    if (!adresse.quartier || !adresse.rue || !adresse.code_postal) {
+      const osmRes = await axios.get('https://nominatim.openstreetmap.org/reverse', {
+        params: { lat, lon, format: 'json', addressdetails: 1, zoom: 18 },
+        headers: { 'User-Agent': 'GPS-RDC-App/1.0' }
+      });
+
+      const osm = osmRes.data.address || {};
+      if (!adresse.numero) adresse.numero = osm.house_number || adresse.numero;
+      if (!adresse.rue) adresse.rue = osm.road || adresse.rue;
+      if (!adresse.quartier) adresse.quartier = osm.suburb || osm.neighbourhood || adresse.quartier;
+      if (!adresse.ville) adresse.ville = osm.city || osm.town || osm.village || adresse.ville;
+      if (!adresse.comte) adresse.comte = osm.county || adresse.comte;
+      if (!adresse.region) adresse.region = osm.state || adresse.region;
+      if (!adresse.code_postal) adresse.code_postal = osm.postcode || adresse.code_postal;
+      if (!adresse.pays) adresse.pays = osm.country || adresse.pays;
+
+      if (osm.display_name) adresse.adresse_formatee = osm.display_name;
+    }
+
+    return adresse;
+
   } catch (err) {
-    console.error('❌ Erreur OpenCage:', err.message);
-    return {
-      numero: '',
-      rue: '',
-      quartier: 'Erreur',
-      ville: '',
-      comte: '',
-      region: '',
-      code_postal: 'Erreur',
-      pays: '',
-      adresse_formatee: 'Adresse inconnue'
-    };
+    console.error('❌ Erreur Google+OSM:', err.message);
+    return adresse;
   }
 }
 
 
+
+
+// ======================
+// 🔄 Variables pour calcul trajet et stops
+// ======================
 let positions = [], startTime = null, currentStop = null, stops = [], totalDistance = 0, totalStopTime = 0;
 
 async function processPosition(pos) {
@@ -196,7 +148,10 @@ async function processPosition(pos) {
       const stopEnd = new Date(pos.timestamp);
       const duration = (stopEnd - currentStop.start) / 1000;
       if (duration >= 10) {
-        await pool.query(`INSERT INTO stops (vehiculeId, userId, latitude, longitude, timestamp, quartier, avenue, duration_seconds) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [currentStop.vehiculeId, currentStop.userId, currentStop.lat, currentStop.lon, currentStop.start, currentStop.quartier, currentStop.rue, Math.round(duration)]);
+        await pool.query(
+          `INSERT INTO stops (vehiculeId, userId, latitude, longitude, timestamp, quartier, avenue, duration_seconds) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [currentStop.vehiculeId, currentStop.userId, currentStop.lat, currentStop.lon, currentStop.start, currentStop.quartier, currentStop.rue, Math.round(duration)]
+        );
         stops.push({ latitude: currentStop.lat, longitude: currentStop.lon, duree: `${Math.round(duration)} sec`, quartier: currentStop.quartier, avenue: currentStop.rue });
         totalStopTime += duration;
       }
@@ -211,12 +166,19 @@ async function saveHistoriqueIfNeeded(vehiculeId, userId) {
   const startStr = startTime.toISOString().slice(11, 16);
   const endStr = new Date().toISOString().slice(11, 16);
 
-  await pool.query(`INSERT INTO historiques (vehiculeid, userId, date, distance_km, start_time, end_time, total_stops, total_stop_time, positions) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [vehiculeId, userId, dateStr, totalDistance.toFixed(2), startStr, endStr, stops.length, `${Math.round(totalStopTime / 60)} min`, JSON.stringify(stops)]);
+  await pool.query(
+    `INSERT INTO historiques (vehiculeid, userId, date, distance_km, start_time, end_time, total_stops, total_stop_time, positions)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [vehiculeId, userId, dateStr, totalDistance.toFixed(2), startStr, endStr, stops.length, `${Math.round(totalStopTime / 60)} min`, JSON.stringify(stops)]
+  );
 
   positions = []; startTime = null; stops = []; currentStop = null; totalDistance = 0; totalStopTime = 0;
 }
 
-function startServers() {
+// ======================
+// 🚗 TCP Tracker
+// ======================
+function startTCPServer() {
   const clients = new Map();
 
   const tcpServer = net.createServer(socket => {
@@ -230,11 +192,11 @@ function startServers() {
         const vehiculeId = parsed.device_id || 'Inconnu';
 
         const result = await pool.query(`
-  SELECT users.id 
-  FROM users 
-  JOIN vehicules ON users.id = vehicules.user_id 
-  WHERE vehicules.vehiculeid = $1
-`, [vehiculeId]);
+          SELECT users.id 
+          FROM users 
+          JOIN vehicules ON users.id = vehicules.user_id 
+          WHERE vehicules.vehiculeid = $1
+        `, [vehiculeId]);
 
         if (result.rows.length === 0) return console.warn(`⚠️ Aucun utilisateur trouvé pour ${vehiculeId}`);
         const userId = result.rows[0].id;
@@ -252,7 +214,11 @@ function startServers() {
 
         const pos = { userId, vehiculeId, latitude, longitude, vitesse: speed, timestamp: parsed.location.timestamp, ...lastAddressCache };
         await processPosition(pos);
-        await pool.query(`INSERT INTO positions (vehiculeId, userId, latitude, longitude, vitesse, timestamp, quartier, rue, ville, comte, region, code_postal, pays) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, [pos.vehiculeId, pos.userId, pos.latitude, pos.longitude, pos.vitesse, pos.timestamp, pos.quartier, pos.rue, pos.ville, pos.comte, pos.region, pos.code_postal, pos.pays]);
+        await pool.query(
+          `INSERT INTO positions (vehiculeId, userId, latitude, longitude, vitesse, timestamp, quartier, rue, ville, comte, region, code_postal, pays)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [pos.vehiculeId, pos.userId, pos.latitude, pos.longitude, pos.vitesse, pos.timestamp, pos.quartier, pos.rue, pos.ville, pos.comte, pos.region, pos.code_postal, pos.pays]
+        );
         console.log(`✅ [${vehiculeId}] Position enregistrée à ${pos.quartier} / ${pos.rue}`);
       } catch (err) {
         console.error('❌ Erreur TCP:', err.message);
@@ -266,68 +232,50 @@ function startServers() {
         console.log(`📁 Traceur ${info.vehiculeId} déconnecté. Historique sauvegardé.`);
         clients.delete(socket);
       }
-      
     });
 
-    socket.on('error', err => {
-      console.error('💥 Erreur socket :', err.message);
-    });
+    socket.on('error', err => console.error('💥 Erreur socket :', err.message));
   });
 
   tcpServer.listen(PORT_TCP, () =>
     console.log(`✅ TCP tracker en écoute sur port ${PORT_TCP}`)
   );
-  
-// ✅ Déplacement ici :
-setInterval(async () => {
-  for (const [socket, info] of clients) {
-    await saveHistoriqueIfNeeded(info.vehiculeId, info.userId);
-    console.log(`⏱️ Historique périodique sauvegardé pour ${info.vehiculeId}`);
-  }
-}, 5 * 60 * 1000);
 
-  app.get('/api/positions', verifyVehiculeToken, async (req, res) => {
-    const { vehiculeId } = req.vehicule;
-    try {
-      const result = await pool.query(`SELECT * FROM positions WHERE vehiculeId = $1`, [vehiculeId]);
-      res.json(result.rows);
-    } catch (err) {
-      res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  // 🕒 Sauvegarde périodique toutes les 5 minutes
+  setInterval(async () => {
+    for (const [socket, info] of clients) {
+      await saveHistoriqueIfNeeded(info.vehiculeId, info.userId);
+      console.log(`⏱️ Historique périodique sauvegardé pour ${info.vehiculeId}`);
     }
-  });
+  }, 5 * 60 * 1000);
+}
 
-  app.get('/api/historiques', verifyVehiculeToken, async (req, res) => {
-  const userId = req.vehicule?.userId || req.userId;
-
-  if (!userId) {
-    return res.status(401).json({ message: "Utilisateur non authentifié" });
-  }
-
-  // Récupérer la date et l'heure (format attendu : "YYYY-MM-DD HH:mm")
-  const datetime = req.query.datetime; // exemple : "2025-07-15 10:30"
-
+// ======================
+// 🔄 Routes API positions et historiques
+// ======================
+app.get('/api/positions', verifyVehiculeToken, async (req, res) => {
+  const { vehiculeId } = req.vehicule;
   try {
-    let query = '';
-    let params = [];
+    const result = await pool.query(`SELECT * FROM positions WHERE vehiculeId = $1`, [vehiculeId]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
 
+app.get('/api/historiques', verifyVehiculeToken, async (req, res) => {
+  const userId = req.vehicule?.userId || req.userId;
+  if (!userId) return res.status(401).json({ message: "Utilisateur non authentifié" });
+
+  const datetime = req.query.datetime;
+  try {
+    let query = '', params = [];
     if (datetime) {
-      // Séparer date et time
-      // ou tu peux faire un filtre exact sur timestamp/datetime selon ta table
-      // Ici on suppose que ta table a une colonne 'date' (type DATE) et 'start_time' (type TIME)
       const [date, time] = datetime.split(' ');
-
-      query = `
-        SELECT * FROM historiques
-        WHERE userId = $1 AND date = $2 AND start_time = $3
-        ORDER BY date DESC
-      `;
+      query = `SELECT * FROM historiques WHERE userId = $1 AND date = $2 AND start_time = $3 ORDER BY date DESC`;
       params = [userId, date, time];
     } else {
-      query = `
-        SELECT * FROM historiques
-        WHERE userId = $1
-        ORDER BY date DESC
-      `;
+      query = `SELECT * FROM historiques WHERE userId = $1 ORDER BY date DESC`;
       params = [userId];
     }
 
@@ -342,29 +290,33 @@ setInterval(async () => {
       end_time: h.end_time,
       total_stops: h.total_stops,
       total_stop_time: h.total_stop_time,
-      positions: (() => {
-        try {
-          return JSON.parse(h.positions || '[]');
-        } catch (e) {
-          console.error('❌ JSON invalide pour positions :', h.positions);
-          return [];
-        }
-      })(),
+      positions: (() => { try { return JSON.parse(h.positions || '[]'); } catch { return []; } })(),
     }));
 
-    if (data.length === 0) {
-      return res.status(404).json({ message: 'Aucun historique trouvé' });
-    }
+    if (data.length === 0) return res.status(404).json({ message: 'Aucun historique trouvé' });
 
     res.json(data);
   } catch (err) {
-    console.error('❌ Erreur lors de la récupération des historiques :', err.message);
+    console.error('❌ Erreur récupération historiques:', err.message);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
+// ======================
+// 🚀 Lancement serveur après connexion PostgreSQL
+// ======================
+pool.connect()
+  .then(client => {
+    console.log('✅ Connexion PostgreSQL réussie');
+    client.release();
 
-  app.listen(PORT_API, () =>
-    console.log(`✅ API REST en écoute sur http://localhost:${PORT_API}`)
-  );
-}
+    app.listen(PORT_API, () => 
+      console.log(`✅ API REST en écoute sur http://localhost:${PORT_API}`)
+    );
+
+    startTCPServer();
+  })
+  .catch(err => {
+    console.error('❌ Connexion PostgreSQL échouée :', err.message);
+    process.exit(1);
+  });
