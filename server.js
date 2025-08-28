@@ -49,6 +49,72 @@ function coordsChangedSignificantly(lat1, lon1, lat2, lon2, threshold = ADDRESS_
   return Math.abs(lat1 - lat2) > threshold || Math.abs(lon1 - lon2) > threshold;
 }
 
+// ======================
+// 🚙 Nouvel API pour utilisateurs
+// ======================
+
+// 🔑 Middleware pour vérifier JWT utilisateur (différent de verifyVehiculeToken)
+function verifyUserToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader) return res.status(401).json({ message: "Token manquant" });
+
+  const token = authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ message: "Token invalide" });
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ message: "Token expiré ou invalide" });
+    req.user = user;
+    next();
+  });
+}
+
+// 1️⃣ Récupérer tous les véhicules d’un utilisateur connecté
+app.get('/api/my-vehicles', verifyUserToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const result = await pool.query(
+      `SELECT vehiculeid, marque, modele, plaque 
+       FROM vehicules WHERE user_id = $1`,
+      [userId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('❌ Erreur /api/my-vehicles:', err.message);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// 2️⃣ Récupérer toutes les positions de tous les véhicules d’un utilisateur
+app.get('/api/my-positions', verifyUserToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const result = await pool.query(
+      `SELECT * FROM positions WHERE userid = $1 ORDER BY timestamp DESC`,
+      [userId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('❌ Erreur /api/my-positions:', err.message);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// 3️⃣ Récupérer tous les historiques de tous les véhicules d’un utilisateur
+app.get('/api/my-histories', verifyUserToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const result = await pool.query(
+      `SELECT * FROM historiques WHERE userid = $1 ORDER BY date DESC`,
+      [userId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('❌ Erreur /api/my-histories:', err.message);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+
 function getComponent(components, type) {
   const comp = components.find(c => c.types.includes(type));
   return comp ? comp.long_name : '';
